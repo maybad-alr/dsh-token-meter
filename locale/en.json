@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Token counter",
+    "description": "Adds a sidebar entry that counts every token recorded across your sessions, broken down by model and session."
+  }
+}

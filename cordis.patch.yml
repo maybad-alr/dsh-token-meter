@@ -1,0 +1,3 @@
+- insert:
+    - id: local-token-counter
+      name: 'dsh-token-meter'
