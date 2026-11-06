@@ -6,7 +6,7 @@ A [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) plugin tha
 
 ## What it does
 
-- **A pill in the conversation header** showing the running total (`1.2B`). Click it for your three heaviest models, with a bar and call count for each.
+- **A pill in the conversation header** showing the running total. Click it for your three heaviest models, with a bar and call count for each.
 - **A full panel** in the left sidebar: total, input, output, cache, model calls, sessions — plus a breakdown by model and by session.
 - Arabic and English.
 
