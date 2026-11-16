@@ -1,9 +1,12 @@
 {
   "name": "dsh-token-meter",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "license": "MIT",
   "type": "module",
   "description": "DSH plugin: counts every token recorded across your sessions, shows the running total in the conversation header, and breaks it down by model and session",
+  "scripts": {
+    "test": "node --test"
+  },
   "exports": {
     ".": "./index.js",
     "./client": "./client.js",

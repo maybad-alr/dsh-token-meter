@@ -19,7 +19,7 @@ Two properties that matter for correctness:
 - **Forked history is not double-counted.** The fold starts at `inheritedEventCount`, so a call copied into a forked session is billed once.
 - **Failed attempts carry no phantom tokens.** `assistant/attempt` records are not counted: they carry no usage.
 
-`totalTokens` is what the provider reported, not a bill. The plugin verifies internally that input + output + cache equals the reported total.
+`totalTokens` is what the provider reported, not a bill. When a log omits it, the plugin derives the same arithmetic the providers report: input + output + cache reads/writes.
 
 ## Install
 
@@ -38,8 +38,9 @@ Then reload the page.
 The first fold reads every session log once (multi-megabyte zstd files, decoded frame by frame). After that:
 
 - a persisted session's log is closed, so its fold is cached forever;
-- a live session is re-read only when its event count changes;
-- the header pill and the panel share one request.
+- a live session is tail-checked with a lightweight event listing and re-folded only when its log advanced;
+- the header pill and the panel are served by one Host fold, and the pill's concurrent polls coalesce into a single request;
+- sessions are folded newest-first, up to 2,000; the panel says when older logs are out of scope.
 
 The route answers immediately with a partial subtotal while a cold fold runs, so the UI never blocks on it.
 
@@ -51,6 +52,7 @@ The route answers immediately with a partial subtotal while a cold fold runs, so
 | `client.js` | Client half: the sidebar entry, the panel, and the header pill |
 | `cordis.patch.yml` | Loader row that mounts the bundle |
 | `locale/*.json` | Plugin Manager metadata (`meta.title`, `meta.description`) |
+| `test/index.test.mjs` | Contract tests for the Host fold (`npm test`) |
 
 The Host route is registered behind the composition's `connection.requestRejection` fence, so only authenticated same-origin callers reach it.
 
