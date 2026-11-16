@@ -7,7 +7,9 @@ window.__ModuleLoader__.load({
     const { createPortal } = require('react-dom')
     const h = React.createElement
 
-    const ROUTE = 'token-meter/summary'
+    // The Host registers the route at the server root; a leading slash keeps
+    // the request absolute even when the page is served from a deeper path.
+    const ROUTE = '/token-meter/summary'
     const NS = 'token-meter'
     const REFRESH_MS = 15000
 
@@ -512,7 +514,7 @@ window.__ModuleLoader__.load({
             type: 'button',
             style: styles.chip,
             title: `${t('chip.title')}: ${exact(totals.totalTokens)}`,
-            'aria-label': `${t('chip.models')} — ${exact(totals.totalTokens)} ${t('panel.token')}`,
+            'aria-label': `${t('chip.title')}: ${exact(totals.totalTokens)} ${t('panel.token')}`,
             'aria-haspopup': 'dialog',
             'aria-expanded': open,
             onClick: () => setOpen((value) => !value),
@@ -639,8 +641,10 @@ window.__ModuleLoader__.load({
         )
       }, [])
 
+      // Opening the panel should paint the Host's current fold immediately;
+      // the Refresh button is the one path that revalidates every log.
       React.useEffect(() => {
-        load(true)
+        load(false)
         return () => abort.current?.abort()
       }, [load])
 
@@ -717,7 +721,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { style: styles.state },
-            counting ? t('panel.counting').replace('{count}', exact(data.countedSessions)) : t('panel.empty'),
+            counting ? t('panel.counting').replace('{count}', exact(data.foldedSessions ?? data.countedSessions)) : t('panel.empty'),
           ),
         )
       }
@@ -737,6 +741,11 @@ window.__ModuleLoader__.load({
           h('span', { style: styles.heroValue }, compact(totals.totalTokens)),
           h('span', { style: styles.heroExact }, `${exact(totals.totalTokens)} ${t('panel.token')}`),
         ),
+        // A cold fold publishes growing subtotals; say so instead of letting a
+        // partial number read as final.
+        data.partial === true
+          ? h('p', { style: styles.note }, t('panel.counting').replace('{count}', exact(data.foldedSessions ?? data.countedSessions)))
+          : null,
         h(
           'div',
           { style: styles.grid },
@@ -778,13 +787,15 @@ window.__ModuleLoader__.load({
               }),
             ),
           ),
-        data.truncated ? h('p', { style: styles.note }, t('panel.truncated').replace('{count}', exact(data.sessionCount))) : null,
+        data.truncated ? h('p', { style: styles.note }, t('panel.truncated').replace('{count}', exact(data.foldedSessions ?? data.sessionCount))) : null,
         h('p', { style: styles.note }, t('panel.note')),
       )
     }
 
     return {
-      inject: ['slots', 'locale'],
+      // `layout` supplies `ctx.layout.selectPanel`, which the pill uses to
+      // open this panel; waiting on it keeps that service present at apply.
+      inject: ['slots', 'locale', 'layout'],
       apply(ctx) {
         // The single-locale form: this bundle ships English and Arabic only, and
         // the two-argument form would demand every built-in locale.

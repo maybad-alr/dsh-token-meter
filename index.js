@@ -6,9 +6,9 @@
  * Nothing here is estimated: a number only counts when a session recorded an
  * `assistant/message` event carrying usage.
  *
- * The fold is incremental. A cheap lightweight event listing per session gives
- * the log's last seq; a session whose last seq is unchanged is served from the
- * previous fold instead of re-reading a multi-megabyte log.
+ * The fold is incremental. A cheap lightweight event listing gives a live
+ * session's last seq; a session whose last seq is unchanged is served from the
+ * previous fold instead of decoding and replaying a multi-megabyte log.
  */
 
 /** Cordis function-plugin name. */
@@ -140,10 +140,10 @@ async function mapLimit(items, limit, task) {
 /**
  * Fold the whole corpus, reusing sessions that cannot have changed.
  *
- * `readSession` already returns the complete logical log, so its event count is
- * a free tail check — asking `listEvents` for the same seq would decode every
- * log twice. A persisted session that was cached is final and is never re-read;
- * only a live session (or one whose fold failed) is decoded again.
+ * A persisted session that was cached is final and is never re-read. A live
+ * session (or one that was live last time) is tail-checked with `listEvents`,
+ * whose per-event records are far cheaper than decoding and replaying the log;
+ * only a session whose last seq advanced is decoded again.
  *
  * Sessions are folded most-recently-created first and folded into the shared
  * accumulators as they land, so `onProgress` can publish a usable subtotal while
@@ -155,14 +155,18 @@ async function mapLimit(items, limit, task) {
  */
 async function foldCorpus(ctx, memo, onProgress) {
   const requested = await ctx.sessionQuery.listSessions()
+  // Newest-first is documented, but sorting before the cap makes the "most
+  // recent 2,000" guarantee independent of the corpus backend's ordering.
   const records = requested
-    .slice(0, MAX_SESSIONS)
+    .slice()
     .sort((left, right) => (Number(right.header.createdAt) || 0) - (Number(left.header.createdAt) || 0))
+    .slice(0, MAX_SESSIONS)
 
   const overall = emptyTotals()
   const models = new Map()
   const sessions = []
   let counted = 0
+  let folded = 0
 
   const publish = () => {
     if (onProgress === undefined) return
@@ -170,8 +174,9 @@ async function foldCorpus(ctx, memo, onProgress) {
       generatedAt: Date.now(),
       sessionCount: requested.length,
       countedSessions: counted,
+      foldedSessions: folded,
       truncated: requested.length > records.length,
-      partial: counted < requested.length,
+      partial: folded < records.length,
       totals: { ...overall },
       models: [...models.values()]
         .map((entry) => ({ ...entry }))
@@ -187,6 +192,22 @@ async function foldCorpus(ctx, memo, onProgress) {
     // A non-live session's log is closed: its fold can never go stale.
     let row = cached !== undefined && !live && cached.live !== true ? cached : undefined
 
+    // A live session may have advanced since the last fold. A lightweight event
+    // listing gives the tail without replay validation or full event clones, so
+    // check it first and keep the cached fold when nothing new was appended.
+    if (row === undefined && cached !== undefined) {
+      try {
+        const tail = await ctx.sessionQuery.listEvents(sessionId)
+        const lastSeq = tail.length === 0 ? -1 : Number(tail[tail.length - 1].seq)
+        if (lastSeq === cached.lastSeq) {
+          cached.live = live
+          row = cached
+        }
+      } catch {
+        // A listing that cannot answer falls through to the exact read.
+      }
+    }
+
     if (row === undefined) {
       let snapshot
       try {
@@ -201,11 +222,11 @@ async function foldCorpus(ctx, memo, onProgress) {
           cached.live = live
           row = cached
         } else {
-          const folded = foldSession(events, snapshot.inheritedEventCount ?? 0)
+          const foldedSession = foldSession(events, snapshot.inheritedEventCount ?? 0)
           row = {
             lastSeq,
-            totals: folded.totals,
-            models: folded.models,
+            totals: foldedSession.totals,
+            models: foldedSession.models,
             createdAt: Number(record.header.createdAt) || 0,
             live,
           }
@@ -214,7 +235,11 @@ async function foldCorpus(ctx, memo, onProgress) {
       }
     }
 
-    if (row === undefined || row.totals.calls === 0) return
+    folded += 1
+    if (row === undefined || row.totals.calls === 0) {
+      if (folded % 5 === 0) publish()
+      return
+    }
     for (const field of Object.keys(row.totals)) overall[field] += row.totals[field]
     for (const [key, value] of row.models) {
       let entry = models.get(key)
@@ -235,7 +260,7 @@ async function foldCorpus(ctx, memo, onProgress) {
       live: row.live,
     })
     counted += 1
-    if (counted % 5 === 0) publish()
+    if (folded % 5 === 0) publish()
   })
 
   sessions.sort((left, right) => right.totalTokens - left.totalTokens)
@@ -243,6 +268,7 @@ async function foldCorpus(ctx, memo, onProgress) {
     generatedAt: Date.now(),
     sessionCount: requested.length,
     countedSessions: sessions.length,
+    foldedSessions: records.length,
     truncated: requested.length > records.length,
     partial: false,
     totals: overall,
@@ -257,6 +283,7 @@ function pendingPlaceholder() {
     generatedAt: Date.now(),
     sessionCount: 0,
     countedSessions: 0,
+    foldedSessions: 0,
     truncated: false,
     partial: true,
     totals: emptyTotals(),
@@ -341,7 +368,8 @@ export function apply(ctx) {
               code: 'fold-failed',
               message: error instanceof Error ? error.message : String(error),
             })
-          }        },
+          }
+        },
       }),
     `token-meter: GET ${SUMMARY_PATH}`,
   )
